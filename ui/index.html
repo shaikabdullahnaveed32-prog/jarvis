@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JARVIS</title>
+<style>
+:root{--cy:120,230,255}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:#03060d;color:#cfeeff;overflow:hidden;
+  font-family:-apple-system,"SF Pro Display","Helvetica Neue",Arial,sans-serif}
+canvas{position:fixed;inset:0;width:100%;height:100%}
+#hud{position:fixed;top:22px;left:28px;font-size:12px;letter-spacing:.35em;text-transform:uppercase}
+#hud b{font-weight:600;color:rgb(var(--cy))}
+#state{display:block;margin-top:7px;font-size:10px;letter-spacing:.3em;opacity:.55}
+#voice{position:fixed;top:18px;right:24px;background:none;border:1px solid rgba(var(--cy),.35);
+  color:rgba(var(--cy),.9);font-size:10px;letter-spacing:.25em;text-transform:uppercase;
+  padding:8px 14px;border-radius:999px;cursor:pointer}
+#voice.off{opacity:.45}
+#mic{position:fixed;top:18px;right:150px;background:none;border:1px solid rgba(var(--cy),.35);color:rgba(var(--cy),.9);font-size:10px;letter-spacing:.25em;text-transform:uppercase;padding:8px 14px;border-radius:999px;cursor:pointer}
+#mic.on{background:rgba(var(--cy),.18);box-shadow:0 0 18px rgba(var(--cy),.45)}
+#lang{position:fixed;top:18px;right:262px;background:none;border:1px solid rgba(var(--cy),.35);color:rgba(var(--cy),.9);font-size:10px;letter-spacing:.25em;text-transform:uppercase;padding:8px 14px;border-radius:999px;cursor:pointer}
+#reply{position:fixed;left:50%;bottom:118px;transform:translateX(-50%);width:min(760px,88vw);
+  max-height:24vh;overflow:auto;text-align:center;font-size:16px;line-height:1.5;font-weight:300;background:rgba(3,9,18,.72);backdrop-filter:blur(10px);border-radius:18px;padding:14px 22px;
+  white-space:pre-wrap;text-shadow:0 0 18px rgba(var(--cy),.35)}
+#bar{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);width:min(640px,88vw)}
+#reply:empty{display:none}
+#in{width:100%;background:rgba(10,25,40,.55);border:1px solid rgba(var(--cy),.3);border-radius:999px;
+  padding:15px 24px;color:#e8f8ff;font-size:16px;outline:none;backdrop-filter:blur(8px)}
+#in:focus{border-color:rgba(var(--cy),.75);box-shadow:0 0 24px rgba(var(--cy),.25)}
+#in::placeholder{color:rgba(200,235,255,.4)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><b>J.A.R.V.I.S</b><span id="state">Online</span></div>
+<button id="mic">Mic off</button>
+<button id="lang">EN</button>
+<button id="voice">Voice on</button>
+<div id="reply" dir="auto">Online.</div>
+<div id="bar"><input id="in" dir="auto" placeholder="Talk to JARVIS..." autocomplete="off" autofocus></div>
+
+<script>
+const TOKEN = "__TOKEN__";
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W, H, DPR;
+function resize(){
+  DPR = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ---- orb points: egg-shaped Fibonacci sphere ----
+const N = 1500, pts = [], GA = Math.PI * (3 - Math.sqrt(5));
+for (let i = 0; i < N; i++){
+  const y = 1 - 2 * (i + .5) / N, r = Math.sqrt(1 - y * y), th = GA * i;
+  const w = 1 - 0.3 * Math.pow((y + 1) / 2, 2);            // narrower at the top
+  pts.push({x: Math.cos(th) * r * w, y: y * 1.12, z: Math.sin(th) * r * w, ph: Math.random() * 6.283});
+}
+
+let state = 'idle', level = 0, spin = 0, t = 0, last = performance.now();
+function targetLevel(){
+  if (state === 'speaking') return .35 + .4 * Math.abs(Math.sin(t * 9)) * (.6 + .4 * Math.sin(t * 3.1)) + .1 * Math.random();
+  if (state === 'thinking') return .28 + .12 * Math.sin(t * 5);
+  return .04 + .02 * Math.sin(t * 1.2);
+}
+
+function drawOrb(){
+  const cx = W / 2, cy = H * .40, R = Math.min(W, H) * .25 * (1 + level * .05);
+  const g = ctx.createRadialGradient(cx, cy, R * .1, cx, cy, R * 1.9);
+  g.addColorStop(0, `rgba(90,210,255,${.10 + level * .35})`);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  const ca = Math.cos(spin), sa = Math.sin(spin), amp = .012 + level * .13;
+  const dotScale = Math.max(.8, R / 220), buckets = [[], [], [], [], []];
+  for (const p of pts){
+    const d = 1 + amp * Math.sin(t * 4 + p.ph * 3 + p.y * 6);
+    const xr = (p.x * ca + p.z * sa) * d, zr = (-p.x * sa + p.z * ca) * d, yr = p.y * d;
+    const persp = 1 / (1 - zr * .35);
+    const depth = Math.max(0, Math.min(.999, (zr + 1) / 2));
+    buckets[Math.floor(depth * 5)].push(cx + xr * R * persp, cy - yr * R * persp, (.6 + depth * 1.2) * persp * dotScale);
+  }
+  for (let b = 0; b < 5; b++){
+    ctx.fillStyle = `rgba(110,225,255,${.16 + b * .2})`;
+    ctx.beginPath();
+    const a = buckets[b];
+    for (let i = 0; i < a.length; i += 3){ ctx.moveTo(a[i] + a[i + 2], a[i + 1]); ctx.arc(a[i], a[i + 1], a[i + 2], 0, 6.283); }
+    ctx.fill();
+  }
+}
+
+function drawWaves(){
+  const rows = 16, cols = 90, top = H * .66, bot = H;
+  ctx.fillStyle = 'rgb(110,225,255)';
+  for (let r = 0; r < rows; r++){
+    const f = r / (rows - 1), y0 = top + (bot - top) * Math.pow(f, 1.6);
+    const amp = (6 + level * 40) * (.4 + f * 1.1), s = 1 + f * 1.4;
+    ctx.globalAlpha = Math.min(1, (.05 + f * .30) * (.7 + level * .6));
+    ctx.beginPath();
+    for (let c = 0; c < cols; c++){
+      const u = c / (cols - 1), x = W * (.5 + (u - .5) * (1 + f * .5));
+      const y = y0 + Math.sin(u * 9 + t * 1.2 + r * .6) * amp * .5 + Math.sin(u * 23 - t * 1.9 + r) * amp * .25;
+      ctx.moveTo(x + s, y); ctx.arc(x, y, s, 0, 6.283);
+    }
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function frame(now){
+  const dt = Math.min(.05, (now - last) / 1000); last = now; t += dt;
+  level += (targetLevel() - level) * Math.min(1, dt * 8);
+  spin += dt * (state === 'thinking' ? 1.6 : state === 'speaking' ? .6 : .22);
+  const bg = ctx.createRadialGradient(W / 2, H * .4, 0, W / 2, H * .4, Math.max(W, H) * .8);
+  bg.addColorStop(0, '#0a1a2e'); bg.addColorStop(1, '#02050b');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  drawWaves(); drawOrb();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---- UI + backend ----
+const inp = document.getElementById('in'), out = document.getElementById('reply'),
+      st = document.getElementById('state'), vb = document.getElementById('voice');
+const LABEL = {idle: 'Online', thinking: 'Thinking', speaking: 'Speaking'};
+let voiceOn = true, busy = false;
+function setState(s){
+  const prev = state; state = s;
+  st.textContent = (s === 'idle' && listening) ? 'Listening' : LABEL[s];
+  if (s !== 'idle') stopRec();
+  else if (listening && prev !== 'idle'){ awakeUntil = Date.now() + 10000; setTimeout(startRec, 900); }
+}
+
+async function api(path, body){
+  const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Token': TOKEN},
+                               body: JSON.stringify(body || {})});
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+async function submit(text){
+  text = (text || '').trim();
+  if (!text || busy) return;
+  busy = true; out.textContent = ''; setState('thinking');
+  try {
+    const {reply} = await api('/ask', {text, speak: voiceOn});
+    out.textContent = reply;
+    setState(voiceOn ? 'speaking' : 'idle');
+  } catch (err){
+    out.textContent = 'Connection to JARVIS lost. Is server.py still running?'; setState('idle');
+  }
+  busy = false;
+}
+
+inp.addEventListener('keydown', e => {
+  if (e.key === 'Escape'){ api('/stop').catch(() => {}); return; }
+  if (e.key !== 'Enter') return;
+  const text = inp.value; inp.value = ''; submit(text);
+});
+
+// ---- voice input: say "Jarvis, <command>". Follow-ups within 10s need no wake word ----
+// EN/AR button switches the recognition language (English or Saudi Arabic).
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const mic = document.getElementById('mic');
+const WAKE = /^(?:hey |ok |okay |يا |هلا )?(?:jarvis|jarvus|jarves|travis|جارفس|جارفيس|جاربس|جرفس)(?![\w\u0600-\u06ff])[\s,.:!،]*/i;
+let rec = null, listening = false, awakeUntil = 0, LANG = localStorage.getItem('lang') || 'en-US';
+
+function startRec(){
+  if (!SR || !listening || state !== 'idle' || rec) return;
+  rec = new SR(); rec.lang = LANG; rec.continuous = true; rec.interimResults = false;
+  rec.onresult = e => {
+    for (let i = e.resultIndex; i < e.results.length; i++){
+      if (!e.results[i].isFinal) continue;
+      let txt = e.results[i][0].transcript.trim();
+      if (!WAKE.test(txt) && Date.now() > awakeUntil) continue;
+      txt = txt.replace(WAKE, '').trim();
+      if (txt) submit(txt);
+    }
+  };
+  rec.onerror = e => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){
+      listening = false; mic.classList.remove('on'); mic.textContent = 'Mic off';
+      out.textContent = 'Microphone blocked. Click Mic again and press Allow, and enable Chrome in System Settings > Privacy & Security > Microphone.';
+    }
+  };
+  rec.onend = () => { rec = null; if (listening && state === 'idle') setTimeout(startRec, 300); };
+  try { rec.start(); } catch (e) { rec = null; }
+}
+function stopRec(){ if (rec){ const r = rec; rec = null; r.onend = null; try { r.abort(); } catch (e) {} } }
+
+mic.onclick = () => {
+  if (!SR){ out.textContent = 'Voice input needs Chrome.'; return; }
+  listening = !listening; localStorage.setItem('mic', listening ? '1' : '0');
+  mic.classList.toggle('on', listening); mic.textContent = listening ? 'Mic on' : 'Mic off';
+  if (listening){ out.textContent = 'Listening. Say "Jarvis" and then your command.'; startRec(); }
+  else stopRec();
+  setState(state);
+};
+
+const langBtn = document.getElementById('lang');
+langBtn.textContent = LANG.startsWith('ar') ? 'AR' : 'EN';
+langBtn.onclick = () => {
+  LANG = LANG.startsWith('ar') ? 'en-US' : 'ar-SA'; localStorage.setItem('lang', LANG);
+  langBtn.textContent = LANG.startsWith('ar') ? 'AR' : 'EN';
+  stopRec(); if (listening) setTimeout(startRec, 300);
+};
+if (SR && localStorage.getItem('mic') === '1') setTimeout(() => mic.click(), 800);
+
+vb.onclick = () => {
+  voiceOn = !voiceOn; vb.textContent = voiceOn ? 'Voice on' : 'Voice off'; vb.classList.toggle('off', !voiceOn);
+  if (!voiceOn) api('/stop').catch(() => {});
+};
+
+setInterval(async () => {          // keeps the orb in sync with the actual spoken audio
+  if (busy) return;
+  try {
+    const r = await fetch('/state', {headers: {'X-Token': TOKEN}});
+    const {speaking} = await r.json();
+    if (speaking && state !== 'speaking') setState('speaking');
+    else if (!speaking && state === 'speaking') setState('idle');
+  } catch (e) {}
+}, 300);
+
+document.addEventListener('click', () => inp.focus());
+</script>
+</body>
+</html>

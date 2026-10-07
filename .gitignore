@@ -1,0 +1,6 @@
+groq.key
+.venv/
+__pycache__/
+*.pyc
+data/jarvis.dbmodels/kokoro-v1.0.onnx
+models/kokoro-v1.0.onnx
